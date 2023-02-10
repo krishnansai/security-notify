@@ -1,100 +1,184 @@
-apiVersion: spec.keptn.sh/0.2.0
-kind: Shipyard
+apiVersion: v1
+kind: ServiceAccount
 metadata:
-  name: "shipyard-delivery-rollout"
-spec:
-  stages:
-  - name: prod           
-    sequences:
-    # Initial Deployment, Test and Evaluation
-    - name: delivery        
-      tasks:
-      - name: deployment
-        properties:
-          deploymentstrategy: user_managed
-      - name: test
-        properties:
-          teststrategy: performance
-      - name: evaluation
-      - name: approval
-        properties:
-          pass: manual
-          warning: manual
-
-
-    # Phase 1 of Rollout: Release, Test, Evaluate
-    - name: canaryphase1
-      triggeredOn:
-        - event: prod.delivery.finished
-          selector:
-            match:
-              result: "pass"
-      tasks:
-      - name: release
-      - name: test
-        properties:
-          teststrategy: real-user
-          canarywaitduration: 2m
-      - name: evaluation
-      - name: approval
-        properties:
-          pass: automatic
-          warning: manual
-
-    # Phase 2 of Rollout: Release, Test, Evaluate
-    - name: canaryphase2
-      triggeredOn:
-        - event: prod.canaryphase1.finished
-          selector:
-            match:
-              result: "pass"
-      tasks:
-      - name: release
-      - name: test
-        properties:
-          teststrategy: real-user
-          canarywaitduration: 2m
-      - name: evaluation
-      - name: approval
-        properties:
-          pass: automatic
-          warning: automatic
-
-    # Phase 3 (Final) of Rollout: Release, Test, Evaluate
-    - name: canaryphase3
-      triggeredOn:
-        - event: prod.canaryphase2.finished
-          selector:
-            match:
-              result: "pass"
-      tasks:
-      - name: release
-      - name: test
-        properties:
-          teststrategy: real-user
-          canarywaitduration: 2m
-      - name: evaluation
-      - name: approval
-        properties:
-          pass: automatic
-          warning: automatic          
-    - name: rollback
-      triggeredOn:
-      - event: prod.delivery.finished
-        selector:
-          match:
-            result: "fail"
-      - event: prod.canaryphase1.finished
-        selector:
-          match:
-            result: "fail"
-      - event: prod.canaryphase2.finished
-        selector:
-          match:
-            result: "fail"
-      - event: prod.canaryphase3.finished
-        selector:
-          match:
-            result: "fail"            
-      tasks:
-      - name: rollback
+  name: "jes-argo"
+  namespace: keptn-jes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: keptn-argo-service-rollouts
+  labels:
+    "app": "keptn"
+rules:
+  - apiGroups:
+      - "argoproj.io"
+    resources:
+      - rollouts
+    verbs:
+      - "*"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: keptn-argo-rollouts
+  labels:
+    app.kubernetes.io/component: rollouts-controller
+    app.kubernetes.io/name: argo-rollouts-clusterrole
+    app.kubernetes.io/part-of: argo-rollouts
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - rollouts
+      - rollouts/status
+      - rollouts/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - analysisruns
+      - analysisruns/finalizers
+      - experiments
+      - experiments/finalizers
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - analysistemplates
+      - clusteranalysistemplates
+    verbs:
+      - get
+      - list
+      - watch
+  # replicaset access needed for managing ReplicaSets
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+  # services patch needed to update selector of canary/stable/active/preview services
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  # secret read access to run analysis templates which reference secrets
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  # pod list/update needed for updating ephemeral data
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - list
+      - update
+      - watch
+  # pods eviction needed for restart
+  - apiGroups:
+      - ""
+    resources:
+      - pods/eviction
+    verbs:
+      - create
+  # event write needed for emitting events
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - update
+      - patch
+  # ingress patch needed for managing ingress annotations, create needed for nginx canary
+  - apiGroups:
+      - networking.k8s.io
+      - extensions
+    resources:
+      - ingresses
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - patch
+  # job access needed for analysis template job metrics
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+  # virtualservice access needed for using the Istio provider
+  - apiGroups:
+      - networking.istio.io
+    resources:
+      - virtualservices
+    verbs:
+      - watch
+      - get
+      - update
+      - list
+  # trafficsplit access needed for using the SMI provider
+  - apiGroups:
+      - split.smi-spec.io
+    resources:
+      - trafficsplits
+    verbs:
+      - create
+      - watch
+      - get
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: keptn-argo-service-rollouts
+  labels:
+    "app": "keptn"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: keptn-argo-rollouts
+#  name: keptn-argo-service-rollouts
+subjects:
+  - kind: ServiceAccount
+    name: "jes-argo"
+    namespace: keptn-jes
